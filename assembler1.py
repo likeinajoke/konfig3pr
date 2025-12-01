@@ -3,9 +3,6 @@ import re
 import json
 from typing import List, Dict, Optional
 
-# --------------------
-# Config: supported mnemonics and their A codes
-# --------------------
 MNEMONICS = {
     'LOAD_CONST': 3,  # load constant into memory at address
     'READ': 0,        # read from memory
@@ -14,9 +11,7 @@ MNEMONICS = {
     # Дополнительные инструкции можно добавить сюда
 }
 
-# --------------------
-# Parsing helpers
-# --------------------
+
 _token_re = re.compile(r"\s*(?P<mnemonic>[A-Za-z_][A-Za-z0-9_]*)\s*(?P<rest>.*)$")
 
 
@@ -36,16 +31,7 @@ def tokenize_operands(ops_str: str) -> List[str]:
 
 
 def assemble_line(line: str, line_no: int = 0) -> Optional[Dict]:
-    """Parse one assembly source line and return an IR dict or None.
 
-    Supported forms:
-      LOAD_CONST <CONST>, <ADDRESS>
-      READ <B_addr>, <C_addr>
-      WRITE <B_addr>, <C_addr>
-      MIN <B_addr>, <C_addr>, <D_addr>
-
-    Comments start with ';' or '#'. Empty lines are ignored.
-    """
     # remove comments
     code = re.split(r'[;#]', line, 1)[0].strip()
     if not code:
@@ -114,10 +100,6 @@ def pretty_print_ir(ir: List[Dict]):
         print()
 
 
-# --------------------
-# File utilities
-# --------------------
-
 def load_file(path: str) -> str:
     with open(path, 'r', encoding='utf-8') as f:
         return f.read()
@@ -127,10 +109,6 @@ def save_json_ir(ir: List[Dict], path: str):
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(ir, f, indent=2, ensure_ascii=False)
 
-
-# --------------------
-# CLI entrypoint
-# --------------------
 
 def main():
     parser = argparse.ArgumentParser(description='UVM assembler — stage 1 (IR output)')
