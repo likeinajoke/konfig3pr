@@ -135,7 +135,7 @@ def save_json_ir(ir: List[Dict], path: str):
 def main():
     parser = argparse.ArgumentParser(description='UVM assembler — stage 1 (IR output)')
     parser.add_argument('src', help='source assembly file (text)')
-    parser.add_argument('out', help='output file (placeholder or JSON when --emit-json)')
+    parser.add_argument('--out', help='Optional output file for JSON IR', default=None)
     parser.add_argument('--test', action='store_true', help='print IR to stdout (test mode)')
     parser.add_argument('--emit-json', action='store_true', help='emit IR as JSON to output file')
     args = parser.parse_args()
