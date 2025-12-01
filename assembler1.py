@@ -23,6 +23,61 @@ def parse_number(tok: str) -> int:
         return int(tok, 16)
     return int(tok, 10)
 
+def parse_expr(expr: str) -> Dict:
+    expr = expr.strip()
+    m = re.match(r"min\((.+),(.+)\)$", expr, re.I)
+    if m:
+        return {'type': 'min', 'left': parse_expr(m.group(1)), 'right': parse_expr(m.group(2))}
+    m = re.match(r"mem\[(.+)\]$", expr, re.I)
+    if m:
+        return {'type': 'mem_load', 'addr': parse_expr(m.group(1))}
+    if re.match(r"^(0x[0-9a-fA-F]+|\d+)$", expr):
+        return {'type': 'number', 'value': parse_number(expr)}
+    if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", expr):
+        return {'type': 'addr', 'name': expr}
+    raise ValueError(f"Невозможно разобрать выражение: {expr}")
+
+var_offset: Dict[str, int] = {}
+next_addr = 100
+
+def alloc_addr(name: str) -> int:
+    global next_addr
+    if name not in var_offset:
+        var_offset[name] = next_addr
+        next_addr += 1
+    return var_offset[name]
+
+def compile_expr(expr: Dict, ir: List[Dict]) -> int:
+    t = expr['type']
+    if t == 'number':
+        target = alloc_addr(f"#const_{expr['value']}")
+        ir.append({'mnemonic': 'LOAD_CONST','A': MNEMONICS['LOAD_CONST'],'B': expr['value'],'C': target})
+        return target
+    if t == 'addr':
+        return alloc_addr(expr['name'])
+    if t == 'mem_load':
+        addr = compile_expr(expr['addr'], ir)
+        dest = alloc_addr(f"#tmp_read_{addr}")
+        ir.append({'mnemonic': 'READ','A': MNEMONICS['READ'],'B': addr,'C': dest})
+        return dest
+    if t == 'min':
+        left = compile_expr(expr['left'], ir)
+        right = compile_expr(expr['right'], ir)
+        dest = alloc_addr(f"#tmp_min_{left}_{right}")
+        ir.append({'mnemonic': 'MIN','A': MNEMONICS['MIN'],'B': left,'C': right,'D': dest})
+        return dest
+    raise ValueError(f"Неизвестный тип выражения: {t}")
+
+def compile_assignment(line: str, ir: List[Dict]):
+    left, right = [s.strip() for s in line.split('=', 1)]
+    if left.startswith('mem['):
+        m = re.match(r"mem\[(.+)\]$", left)
+        addr_expr = parse_expr(m.group(1))
+        dest = compile_expr(addr_expr, ir)
+    else:
+        dest = alloc_addr(left)
+    src = compile_expr(parse_expr(right), ir)
+    ir.append({'mnemonic': 'WRITE','A': MNEMONICS['WRITE'],'B': src,'C': dest})
 
 def tokenize_operands(ops_str: str) -> List[str]:
     # Splits operands by commas, trims whitespace
@@ -30,85 +85,26 @@ def tokenize_operands(ops_str: str) -> List[str]:
     return parts
 
 
-def assemble_line(line: str, line_no: int = 0) -> Optional[Dict]:
-
-    # remove comments
-    code = re.split(r'[;#]', line, 1)[0].strip()
-    if not code:
-        return None
-    m = _token_re.match(code)
-    if not m:
-        raise ValueError(f"Syntax error on line {line_no}: {line}")
-    mnemonic = m.group('mnemonic').upper()
-    rest = m.group('rest').strip()
-    if mnemonic not in MNEMONICS:
-        raise ValueError(f"Unknown mnemonic '{mnemonic}' on line {line_no}")
-    A = MNEMONICS[mnemonic]
-    operands = tokenize_operands(rest) if rest else []
-    instr: Dict = {'mnemonic': mnemonic, 'A': A}
-
-    # Instruction-specific operand handling
-    if mnemonic == 'LOAD_CONST':
-        # Correct format: LOAD_CONST CONST, ADDRESS
-        if len(operands) != 2:
-            raise ValueError(f"LOAD_CONST expects 2 operands (CONST, ADDRESS) on line {line_no}")
-        instr['B'] = parse_number(operands[0])   # CONST -> field B
-        instr['C'] = parse_number(operands[1])   # ADDRESS -> field C
-    elif mnemonic == 'READ':
-        if len(operands) != 2:
-            raise ValueError(f"READ expects 2 operands (B_addr, C_addr) on line {line_no}")
-        instr['B'] = parse_number(operands[0])
-        instr['C'] = parse_number(operands[1])
-    elif mnemonic == 'WRITE':
-        if len(operands) != 2:
-            raise ValueError(f"WRITE expects 2 operands (B_addr, C_addr) on line {line_no}")
-        instr['B'] = parse_number(operands[0])
-        instr['C'] = parse_number(operands[1])
-    elif mnemonic == 'MIN':
-        if len(operands) != 3:
-            raise ValueError(f"MIN expects 3 operands (B, C, D) on line {line_no}")
-        instr['B'] = parse_number(operands[0])
-        instr['C'] = parse_number(operands[1])
-        instr['D'] = parse_number(operands[2])
-    else:
-        instr['operands'] = operands
-    return instr
-
-
 def assemble_text(text: str) -> List[Dict]:
-    """Assemble whole program text to IR (list of instruction dicts)."""
-    lines = text.splitlines()
     ir: List[Dict] = []
-    for i, line in enumerate(lines, start=1):
-        parsed = assemble_line(line, line_no=i)
-        if parsed:
-            ir.append(parsed)
+    for line in text.splitlines():
+        code = re.split(r'[;#]', line)[0].strip()
+        if not code:
+            continue
+        if '=' in code:
+            compile_assignment(code, ir)
+        else:
+            raise ValueError(f"Строка не является присваиванием: {line}")
     return ir
 
 
 def pretty_print_ir(ir: List[Dict]):
-    """Print IR in human-readable format (fields and values)."""
-    for i, ins in enumerate(ir, start=1):
-        mnemonic = ins.get('mnemonic', '?')
-        A = ins.get('A', 0)
-        print(f"Instruction {i}: {mnemonic}")
-        print(f"  A: {A} (0x{A:X})")
-        for key in ('B', 'C', 'D', 'CONST'):
-            if key in ins:
-                val = ins[key]
-                print(f"  {key}: {val} (0x{val:X})")
+    for i, ins in enumerate(ir, 1):
+        print(f"Instruction {i}: {ins['mnemonic']}")
+        for k, v in ins.items():
+            if k != 'mnemonic':
+                print(f" {k}: {v}")
         print()
-
-
-def load_file(path: str) -> str:
-    with open(path, 'r', encoding='utf-8') as f:
-        return f.read()
-
-
-def save_json_ir(ir: List[Dict], path: str):
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(ir, f, indent=2, ensure_ascii=False)
-
 
 def main():
     parser = argparse.ArgumentParser(description='UVM assembler — stage 1 (IR output)')
@@ -118,19 +114,15 @@ def main():
     parser.add_argument('--emit-json', action='store_true', help='emit IR as JSON to output file')
     args = parser.parse_args()
 
-    src_text = load_file(args.src)
-    ir = assemble_text(src_text)
+    text = open(args.src).read()
+    ir = assemble_text(text)
 
     if args.test:
-        print('=== Assembled IR (test mode) ===\n')
         pretty_print_ir(ir)
 
-    if args.emit_json:
-        save_json_ir(ir, args.out)
-        print(f'IR saved as JSON to {args.out}')
-    else:
-        print('Note: stage 1 does not write final binary. Use --emit-json to save IR to out file')
-
+    if args.emit_json and args.out:
+        with open(args.out, 'w') as f:
+            json.dump(ir, f, indent=2)
 
 if __name__ == '__main__':
     main()
